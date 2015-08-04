@@ -1,0 +1,1054 @@
+/*
+ * Scan Matrix Example #1
+ *
+ * ==========================================================================
+ *
+ *  Copyright 2006 Thorsten Klose (tk@midibox.org)
+ *  Licensed for personal non-commercial use only.
+ *  All other rights reserved.
+ *
+ * ==========================================================================
+ */
+
+#include "cmios.h"
+#include "pic18f452.h"
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Local variables
+/////////////////////////////////////////////////////////////////////////////
+#include "variables.h"
+#include "mclock.h"
+#include "main.h"
+#include "sm_simple.h"
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////
+// Global variables
+/////////////////////////////////////////////////////////////////////////////
+
+
+// status of application (see bitfield declaration in main.h)
+app_flags_t app_flags;
+
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is just to have a start, it's not great, i'm not the Cmen :]
+/////////////////////////////////////////////////////////////////////////////
+
+
+///////////////////[step][chn]
+//unsigned char pattern[16][1];
+unsigned char pattern[16][16][1];
+
+// MINI SEQUENCER
+unsigned char _tik=0;
+unsigned char step=0;
+unsigned char lastep=0;
+unsigned char last_played[16][1];//Last played note for each chan
+
+void PUSH(){
+	
+	unsigned char kick=23;//midi note number (base_drum on my drumStation)
+	unsigned char note;//midi note
+	unsigned char i;
+
+
+	if( _tik == 24 )_tik=0;  
+
+
+	// PATTERN PLAY //
+
+	if(_tik==0 || _tik==6 || _tik==12 || _tik==18){ // ON MORE STEP :)
+
+		if(step==16)step=0;//16 step reset
+
+		MIOS_LCD_CursorSet(lastep);
+		if(_tik==6){
+			MIOS_LCD_PrintChar('+');//clr
+		}else{
+			MIOS_LCD_PrintChar('-');//clr
+		}
+		MIOS_LCD_CursorSet(step);
+		MIOS_LCD_PrintChar('>');//pointer
+
+		//note=pattern[step][0];
+		
+//		DEBUG
+//		MIOS_LCD_PrintCString(" N");
+//		MIOS_LCD_PrintBCD2(pattern[step][0]);
+//		MIOS_LCD_PrintCString("/");
+//		MIOS_LCD_PrintBCD2(step+1);
+
+
+		for(i=0;i<16;i++){// Each midi channels
+
+			//LAST NOTE OFF
+			if(last_played[i][0]==0x80){
+
+			}else{
+				MIOS_MIDI_TxBufferPut(144 + i);//bassStation
+				MIOS_MIDI_TxBufferPut(last_played[i][0]);
+				MIOS_MIDI_TxBufferPut(0x00);
+			}
+			
+			//NOTE ON
+			if(pattern[i][step][0]==0x80){
+				//last_played[i][0]=pattern[i][step][0];//clr
+			}else if(pattern[i][step][0]==0x81){//PAD
+				//keep last played
+			}else{
+				MIOS_MIDI_TxBufferPut(144 + i);//bassStation
+				MIOS_MIDI_TxBufferPut(pattern[i][step][0]);
+				MIOS_MIDI_TxBufferPut(0x7f);
+			}
+			last_played[i][0]=pattern[i][step][0];			
+		}
+
+		lastep=step;//mem last step
+		step++;//16 step counter
+
+	}
+
+	_tik++;
+	return;
+}
+
+void INITPAT(){//CLEAR PATTERN
+	unsigned char i;
+	unsigned char j;
+	for(i=0;i<16;i++){
+		for(j=0;j<16;j++){
+			pattern[i][j][0]=0x80;
+		}
+	}
+}
+
+void MIDICHN()// DISPLAY MIDI CHN
+{
+	MIOS_LCD_CursorSet(0x00);
+	MIOS_LCD_PrintCString(midi_name[midi_channel]);//
+	MIOS_LCD_CursorSet(0xcf);
+	MIOS_LCD_PrintCString("CHN");//
+	MIOS_LCD_PrintBCD2(midi_channel+1);
+	return ; 
+}
+
+void GET_NCHR(unsigned char note){// DISPLAY LITTERAL NOTES !!!
+
+	unsigned char n=0;	// 8bit is enough
+	unsigned char oct=0;// octave number
+
+	if(note==0x80){
+		MIOS_LCD_CursorSet(0x51);
+		MIOS_LCD_PrintCString("NUL");//
+		return;
+	}
+
+
+	if(note==0x81){
+		MIOS_LCD_CursorSet(0x51);
+		MIOS_LCD_PrintCString("PAD");//
+		return;
+	}
+
+	//unsigned char nn=0;//note number (0 to 11)
+	//unsigned char chr;
+	do{
+		oct++;
+		n=oct*12;
+	}
+	while(n<=note);
+	oct--;
+	//nn=note-12*oct;//Note number
+
+	MIOS_LCD_CursorSet(0x51);
+	MIOS_LCD_PrintCString(note_name[note-12*oct]);//
+	MIOS_LCD_PrintBCD1(oct);
+	return ; 
+}
+
+unsigned char recstep=0;//STEP RECORD
+
+//  http://lcd5x8char.midibox.org
+
+void sprintrec(){
+	MIOS_LCD_CursorSet(0x00);
+	MIOS_LCD_PrintCString("+---+---+---+--- REC");//
+	MIOS_LCD_CursorSet(recstep);
+	MIOS_LCD_PrintChar('>');//pointer
+	return;
+}
+
+void REC()// RECORD PATTERN, STEP MODE
+{
+
+	//MIOS_LCD_Clear();
+
+	
+
+	if(RECORD==0){
+		INPUT=0;
+		RECORD=1;
+		recstep=0;
+		sprintrec();
+		GET_NCHR(pattern[midi_channel][recstep][0]);//display note as "C-5"
+		return;
+	}
+
+	
+	if(last_mx_pin==1){//RETURN -> pad
+		pattern[midi_channel][recstep][0]=0x81;//set PAD
+	}else if(last_mx_pin==2){//NXT
+		recstep++;
+		if(recstep>15)recstep=0;
+		sprintrec();
+		GET_NCHR(pattern[midi_channel][recstep][0]);//display note as "C-5"
+		return;
+	}else if(last_mx_pin==3){//PRV
+		if(recstep==0)recstep=16;
+		recstep--;
+		sprintrec();
+		GET_NCHR(pattern[midi_channel][recstep][0]);//display note as "C-5"
+		return;
+
+	}else if(last_mx_pin==12){// CLR/HOME -> clear pattern 
+		for(i=0;i<16;i++){
+			pattern[midi_channel][i][0]=0x80;//set null note
+		}
+		recstep=0;
+		sprintrec();
+		GET_NCHR(pattern[midi_channel][recstep][0]);//display note as "C-5"
+		return;
+
+	}else if(last_mx_pin==57){//ESCAPE
+		RECORD=0;
+		return;
+	}else if(last_mx_pin==63){//space bar skip
+		//pattern[recstep][0]=0x80;//set null note
+		pattern[midi_channel][recstep][0]=0x80;//set null note
+
+	}else if(note_map[last_mx_pin][0]==0x80){// not a note !
+		//MIOS_LCD_PrintCString("???");//
+		return;
+
+	}else{
+		//pattern[recstep][0]=note_map[last_mx_pin][0]+transpose;//set note
+		pattern[midi_channel][recstep][0]=note_map[last_mx_pin][0]+transpose;//set note
+	}
+	
+	recstep++;
+	sprintrec();
+	GET_NCHR(pattern[midi_channel][recstep][0]);//display note as "C-5"
+
+	if(recstep>=16){
+		MIOS_LCD_Clear();
+		MIOS_LCD_PrintCString("OK");//
+		RECORD=0;
+		recstep=0;
+	} 
+
+	return ; 
+}
+
+unsigned char instep=0;//input step count
+
+void INKEY(unsigned char _chr)// READ KEYBOARD INPUTS (And store string to buffer str_buffer)
+{
+
+
+	// 0 -> del
+	// 1 -> return
+	// 57 -> echap
+
+	if(INPUT==0){
+		MIOS_LCD_Clear();
+		mode=2;//Ne joue pas les notes
+		INPUT=1;
+		instep=0;
+		return;
+	}
+
+	MIOS_LCD_CursorSet(0x00);
+	MIOS_LCD_PrintCString("INPUT ");//
+	MIOS_LCD_PrintBCD2(instep+1);
+
+	switch (_chr) {
+
+		case 0://del
+			if(instep>0){
+				instep--;
+				MIOS_LCD_CursorSet(64 + instep);
+				MIOS_LCD_PrintChar(note_map[63][1]);//SPACE (clr)
+			}
+			break;
+
+		case 1://return;
+			MIOS_LCD_PrintCString("OK     ");//
+			INPUT=0;
+			break;
+		
+		case 57://esc
+			INPUT=0;
+			break;
+
+		default:
+			
+			//MIOS_LCD_CursorSet(0x40 + instep);
+			MIOS_LCD_CursorSet(64 + instep);
+
+			//chr=note_map[pin][1];
+			MIOS_LCD_PrintChar(note_map[_chr][1]);//ASCII CHR
+			if(instep<16)instep++;
+			break;
+
+	}
+
+	return ; 
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS after startup to initialize the 
+// application
+/////////////////////////////////////////////////////////////////////////////
+void Init(void) __wparam
+{
+
+	// initialize the shift registers
+	MIOS_SRIO_NumberSet(16);           // use up to 16 shift registers
+	MIOS_SRIO_UpdateFrqSet(1);         // set update frequency
+	MIOS_SRIO_TS_SensitivitySet(0);    // disable touch sensors
+
+
+	// initialize the AIN driver
+	MIOS_AIN_NumberSet(8);   // nb pots connected
+	MIOS_AIN_UnMuxed();      // no AINX4 modules are used
+	MIOS_AIN_DeadbandSet(7); // should be 7 when 7bit resolution is used
+
+	// initialize the scan matrix driver
+	SM_Init();
+
+	// YOUHOOO !!!! //////////////////////////
+	MCLOCK_Init();
+	MCLOCK_BPMSet(80);
+
+	INITPAT();
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS in the mainloop when nothing else is to do
+/////////////////////////////////////////////////////////////////////////////
+void Tick(void) __wparam
+{
+  // call the scan matrix button handler
+  SM_ButtonHandler();
+   // this routine sends the MIDI clock (and Start/Continue/Stop) if requested
+  MCLOCK_Tick();
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is periodically called by MIOS. The frequency has to be
+// initialized with MIOS_Timer_Set
+/////////////////////////////////////////////////////////////////////////////
+void Timer(void) __wparam
+{
+  // forward timer event to MIDI clock module (-> mclock.c)
+  MCLOCK_Timer();
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when the display content should be 
+// initialized. Thats the case during startup and after a temporary message
+// has been printed on the screen
+/////////////////////////////////////////////////////////////////////////////
+void DISPLAY_Init(void) __wparam
+{
+	// clear LCD
+	MIOS_LCD_Clear();
+	MIOS_LCD_CursorSet(0x00);//First line
+	MIOS_LCD_PrintCString("HARD-TRACKER");
+
+	app_flags.DISPLAY_UPDATE_REQ = 1;
+	//for(i=0;i<255;i++){	  MIOS_LCD_PrintChar(i);  }
+}
+
+/////////////////////////////////////////////////////////////////////////////
+//  This function is called in the mainloop when no temporary message is shown
+//  on screen. Print the realtime messages here
+/////////////////////////////////////////////////////////////////////////////
+void DISPLAY_Tick(void) __wparam
+{
+
+  // update display only when requested to minimize the CPU load
+  if( !app_flags.DISPLAY_UPDATE_REQ )
+    return;
+  app_flags.DISPLAY_UPDATE_REQ = 0;
+
+
+  // print BPM at lower line, left side
+  MIOS_LCD_CursorSet(0xc0 + 0);
+  MIOS_LCD_PrintBCD3(MCLOCK_BPMGet());
+
+  // print the meter at lower line, right side
+  MIOS_LCD_CursorSet(0xc0 + 4);
+  MIOS_LCD_PrintBCD5(mclock_ctr_measures + 1);
+  MIOS_LCD_PrintChar('/');
+  MIOS_LCD_PrintBCD1(mclock_ctr_beats + 1);
+//  MIOS_LCD_PrintChar(':');
+//  MIOS_LCD_PrintBCD3(mclock_ctr_24 * 5);
+
+  // print message on screen depending on button status
+/*
+  if(! sm_button_value ){
+	MIOS_LCD_CursorSet(0x40 + 0);
+	MIOS_LCD_PrintCString("C");
+	MIOS_LCD_PrintBCD1(sm_button_column);
+	MIOS_LCD_PrintCString("*R");
+	MIOS_LCD_PrintBCD1(sm_button_row);
+  }
+*/
+
+}
+
+
+
+
+
+
+void SAVE(){
+	MIOS_LCD_CursorSet(0x00);//First line
+	MIOS_LCD_PrintCString("BANKSTICK 0x");
+	MIOS_LCD_PrintHex2(MIOS_BANKSTICK_CtrlGet());
+	//str_buffer[16][1];
+	MIOS_LCD_CursorSet(0x40);//2 line
+	//MIOS_LCD_PrintCString("Write 0x");
+
+	switch(MIOS_BANKSTICK_WritePage(0,str_buffer)){
+		
+		case 0x01:
+			//0x01: Byte mismatch
+			MIOS_LCD_PrintCString("Byte mismatch");
+			break;
+		
+		case 0x02:
+			//0x02: No BankStick
+			MIOS_LCD_PrintCString("No BankStick");
+			break;
+
+		default:
+			//0x00 save ok
+			MIOS_LCD_PrintCString("Save OK");
+			break;
+	}
+
+
+}
+
+
+void LOAD(){
+
+	unsigned char i;
+	unsigned char str[64];
+	
+	MIOS_LCD_CursorSet(0x00);//First line
+	MIOS_LCD_PrintCString("BANKLOAD");
+	MIOS_LCD_CursorSet(0x40);//2 line
+	MIOS_BANKSTICK_ReadPage(0,str);
+
+
+	for(i=0;i<16;i++){
+		MIOS_LCD_CursorSet(i);
+		MIOS_LCD_PrintChar(str[i]);//
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+//  This function is called by MIOS when a complete MIDI event has been received
+/////////////////////////////////////////////////////////////////////////////
+void MPROC_NotifyReceivedEvnt(unsigned char evnt0, unsigned char evnt1, unsigned char evnt2) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when a MIDI event has been received
+// which has been specified in the MIOS_MPROC_EVENT_TABLE
+/////////////////////////////////////////////////////////////////////////////
+void MPROC_NotifyFoundEvent(unsigned entry, unsigned char evnt0, unsigned char evnt1, unsigned char evnt2) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when a MIDI event has not been completly
+// received within 2 seconds
+/////////////////////////////////////////////////////////////////////////////
+void MPROC_NotifyTimeout(void) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when a MIDI byte has been received
+/////////////////////////////////////////////////////////////////////////////
+void MPROC_NotifyReceivedByte(unsigned char byte) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS before the shift register are loaded
+/////////////////////////////////////////////////////////////////////////////
+void SR_Service_Prepare(void) __wparam
+{
+  // call the Scan Matrix Driver
+  SM_PrepareCol();
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS after the shift register have been loaded
+/////////////////////////////////////////////////////////////////////////////
+void SR_Service_Finish(void) __wparam
+{
+  // call the Scan Matrix Driver
+  SM_GetRow();
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when an button has been toggled
+// pin_value is 1 when button released, and 0 when button pressed
+/////////////////////////////////////////////////////////////////////////////
+void DIN_NotifyToggle(unsigned char pin, unsigned char pin_value) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when an encoder has been moved
+// incrementer is positive when encoder has been turned clockwise, else
+// it is negative
+/////////////////////////////////////////////////////////////////////////////
+void ENC_NotifyChange(unsigned char encoder, char incrementer) __wparam
+{
+}
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is called by MIOS when a pot has been moved
+/////////////////////////////////////////////////////////////////////////////
+void AIN_NotifyChange(unsigned char pin, unsigned int pin_value) __wparam
+{
+	MIOS_LCD_CursorSet(0x80); // 3rd line
+
+	MIOS_LCD_PrintBCD1(pin);
+	MIOS_LCD_PrintCString(" CC:");		
+
+	MIOS_LCD_PrintHex2(joy_map[midi_channel][pin]);
+
+	MIOS_LCD_PrintCString(" - ");		
+	MIOS_LCD_PrintBCD3(MIOS_AIN_Pin7bitGet(pin));
+
+	//Bx = Control Change	// 176 + midi_channel
+
+	if(pin>1)return;
+
+	//MIOS_MIDI_TxBufferPut(0xb0); // CC at channel 1
+	MIOS_MIDI_TxBufferPut(176 + midi_channel); // CC at channel n
+	MIOS_MIDI_TxBufferPut(joy_map[midi_channel][pin]);  // pin number corresponds to CC number
+	MIOS_MIDI_TxBufferPut(MIOS_AIN_Pin7bitGet(pin));   // don't send 10bit pin_value,
+
+
+
+}
+
+
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// Enable/disable Merger
+/////////////////////////////////////////////////////////////////////////////
+
+void MERGER(){//Enable/disable Merger
+	//st=;
+	MIOS_LCD_CursorSet(0x00);
+
+	switch(MIOS_MIDI_MergerGet()){
+		case 0x00://MIOS_MIDI_MERGER_DISABLED
+			MIOS_MIDI_MergerSet(0x01);//ENABLE MERGER
+			MIOS_LCD_PrintCString("MIDI MERGER DISABLED");
+			break;
+		case 0x01://MIOS_MIDI_MERGER_ENABLED
+			MIOS_MIDI_MergerSet(0x00);//DISABLE MERGER
+			MIOS_LCD_PrintCString("MIDI MERGER ENABLED");
+			break;
+		case 0x02://MIDIbox Link End Point
+			MIOS_LCD_PrintCString("MB Link End Point");
+			break;
+		case 0x03://MIDIbox Link Forwarding Point
+			MIOS_LCD_PrintCString("MB Link Fwd Point");
+			break;
+		default: 
+			MIOS_LCD_PrintCString("ERROR");
+			break;
+	}
+}
+
+/*
+void BPM() //DISPLAY BPM
+{
+	MIOS_LCD_CursorSet(0xc0);
+	MIOS_LCD_PrintCString("BPM:");//
+	MIOS_LCD_PrintBCD3(bpm);
+	return ; 
+}
+*/
+
+
+
+
+
+void NOTE(unsigned char value) // SEND A NOTE ON KEY PRESS
+{
+
+	if(CTRL)return;//do not play notes if CTRL KEY
+
+	if(note_map[last_mx_pin][0]==0x80){
+		//MIOS_LCD_PrintCString("NO NOTES :");
+		//MIOS_LCD_PrintHex2(note_map[last_mx_pin][0]);
+		return;//Do not send stupid datas !
+	}
+	//MIOS_LCD_PrintCString("NOTE");
+	//MIOS_LCD_PrintHex2(note_map[last_mx_pin][0]);
+	MIOS_MIDI_TxBufferPut(144 + midi_channel);
+	MIOS_MIDI_TxBufferPut(note_map[last_mx_pin][0]+transpose);
+	MIOS_MIDI_TxBufferPut(value ? 0x00 : 0x7f);
+
+	//DISPLAY
+	GET_NCHR(note_map[last_mx_pin][0]+transpose);
+	return ; 
+}
+
+
+
+
+void ALL_NOTE_OFF(){//KILL EVERY NOTES 
+	//MIOS_MIDI_TxBufferPut(0xB0);//Controller Chn 1
+	for(i=0;i<15;i++){
+		MIOS_MIDI_TxBufferPut(176 + i);//Controller Chn i
+		MIOS_MIDI_TxBufferPut(123);//ALL NOTE OFF // http://www.borg.com/~jglatt/tech/midispec/ctllist.htm
+		MIOS_MIDI_TxBufferPut(0x00);
+	}
+	return;
+}
+
+void PRG_CHNG(){//CHANGE PROGRAM
+	MIOS_LCD_CursorSet(0x8e);
+	MIOS_LCD_PrintCString("PRG");//
+	if(prg>127)prg=0;
+	MIOS_LCD_PrintBCD3(prg+1);
+
+	//MIOS_MIDI_TxBufferPut(0xc0);//PRG CHANGE
+	MIOS_MIDI_TxBufferPut(192 + midi_channel);//PRG CHANGE
+	MIOS_MIDI_TxBufferPut(prg);
+	return;
+}
+
+void BNK_CHNG(unsigned char bank){//CHANGE BANK !!
+	MIOS_LCD_CursorSet(0x8e);
+	MIOS_LCD_PrintCString("BNK");//
+	MIOS_LCD_PrintBCD3(bank);
+
+	MIOS_MIDI_TxBufferPut(176 + midi_channel);//Controller Chn 1
+	MIOS_MIDI_TxBufferPut(0x00);//coarse // http://www.borg.com/~jglatt/tech/midispec/ctllist.htm
+	MIOS_MIDI_TxBufferPut(bank);
+	return;
+}
+
+
+
+void TRANSPOSE(unsigned char transp){
+	transpose=transp;
+	MIOS_LCD_CursorSet(0xc0);
+	MIOS_LCD_PrintCString("TRANSPOSE +");
+	MIOS_LCD_PrintBCD2(transpose);
+	return;
+}
+
+
+
+unsigned char random_seed_l;
+unsigned char random_seed_h;
+
+void gen_random_number(void)
+{
+  unsigned int tmp = random_seed_l * random_seed_h;
+  random_seed_l = TMR0L + (unsigned char)(tmp & 0xff);
+  random_seed_h = 0x69 + (unsigned char)(tmp >> 8);
+	MIOS_LCD_PrintCString("RND:");
+	MIOS_LCD_PrintBCD3(tmp);
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////
+// This function is NOT called by MIOS, but by the scan matrix handler
+// in sm_simple.asm, when a pin of the scan matrix has been toggled
+// Note: in addition to "pin" and "value", the "sm_button_column" and
+// "sm_button_row" are available as global variables (defined in sm_simple.h)
+/////////////////////////////////////////////////////////////////////////////
+void SM_NotifyToggle(unsigned char pin, unsigned char value) __wparam
+{
+	last_mx_pin=pin;
+  // send pin number and value as Note On Event
+  //MIOS_MIDI_TxBufferPut(0x90);
+  //MIOS_MIDI_TxBufferPut(pin);
+  //MIOS_MIDI_TxBufferPut(value ? 0x00 : 0x7f);
+  
+  //MIOS_LCD_PrintBCD1(sm_button_column);
+  //MIOS_LCD_PrintCString("*");
+  //MIOS_LCD_PrintBCD1(sm_button_row);
+
+	// request display update
+	// app_flags.DISPLAY_UPDATE_REQ = 1;
+	
+	MIOS_LCD_CursorSet(0x10); // upper right
+	MIOS_LCD_PrintCString("#");
+	MIOS_LCD_PrintBCD2(pin);//status
+	chr=note_map[pin][1];
+	MIOS_LCD_PrintChar(chr);//status
+	//MIOS_LCD_PrintCString(":");
+	//MIOS_LCD_PrintChar(pin);//status
+
+
+	//pin=64;
+	if(mode==1){//PLAY
+		NOTE(value);
+	}
+
+
+
+	
+	if(CTRL && value){
+		switch(pin){
+			case 25://"I"
+				//INPUT=1;//Ctrl + I -> Start reading inkeys
+				INKEY(0x00);
+				CTRL=0;
+				return;
+				break;
+
+			case 29://O Load
+				LOAD();
+				break;
+
+			case 33://Y RND
+				gen_random_number();
+				break;
+
+			case 41://"R"
+				//RECORD=1;//Ctrl + R -> Start recording pattern
+				REC();
+				CTRL=0;
+				return;
+				break;
+
+			case 54://S
+				SAVE();
+				break;
+
+			default:
+				break;
+		}
+	}
+
+
+	if(INPUT){
+		if(value)INKEY(pin);
+		return;
+	}
+
+	if(RECORD){
+		if(value)REC();
+		return;
+	}
+
+
+	switch(pin){
+		case 0://<- INST/DEL
+			//MIOS_LCD_PrintCString("Inst/Del");
+			if(COMMODORE && SHIFT)MIOS_Reset();
+			break;
+
+		case 1://RETURN
+		break;
+
+		case 2://CRSR-
+			if(!value){
+				prg++;
+				PRG_CHNG();
+			}
+		break;
+
+		case 3://CRSR|
+			if(!value){
+				prg--;
+				PRG_CHNG();
+			}
+		break;
+
+		case 4://F7
+
+			if(!SHIFT){
+				//transpose=0;
+				TRANSPOSE(0);
+			}else{
+				TRANSPOSE(48);
+			}
+			//MIOS_LCD_PrintCString("TRANSPOSE +");
+			break;
+
+		case 5://F5
+
+			if(!SHIFT){
+				TRANSPOSE(12);
+			}else{
+				TRANSPOSE(60);
+				//transpose=60;
+			}
+			break;
+
+		case 6://F3
+
+			if(!SHIFT){
+				//transpose=24;
+				TRANSPOSE(24);
+			}else{
+				//transpose=72;
+				TRANSPOSE(72);
+			}
+			break;
+
+		case 7://F1
+
+			if(!SHIFT){
+				//transpose=36;
+				TRANSPOSE(36);
+			}else{
+				//transpose=84;
+				TRANSPOSE(84);
+			}
+			break;
+
+
+
+
+		case 12:// CLEAR HOME
+			MIOS_LCD_Clear();
+			ALL_NOTE_OFF();
+			break;
+
+
+
+		case 14:// =
+		break;
+
+		case 15:// RSHIFT
+		break;
+
+		case 16:// +
+			if(SHIFT){
+				MIOS_LCD_Clear();
+				MCLOCK_BPMSet(MCLOCK_BPMGet()+1);
+				//bpm++;
+				//BPM();
+				break;
+			}
+			break;
+
+
+
+		case 20:// -
+			if(SHIFT){
+				MIOS_LCD_Clear();
+				MCLOCK_BPMSet(MCLOCK_BPMGet()-1);
+				//bpm--;
+				//BPM();
+				break;
+			}
+
+
+		case 24:// 9 (Shift -> Midi Chn 9)
+			if(CTRL){
+				midi_channel=8;
+				MIDICHN();
+				break;
+			}
+			break;
+
+
+
+		case 28:// 0 (Shift -> Midi Chn 10)
+			if(CTRL){
+				midi_channel=9;
+				MIDICHN();
+			}
+			break;
+
+
+		case 32:// 7 (Shift -> Midi Chn 7)
+			if(CTRL){
+				midi_channel=6;
+				MIDICHN();
+			}
+			break;
+
+
+		case 36:// 8 (Shift -> Midi Chn 8)
+			if(CTRL){
+				midi_channel=7;
+				MIDICHN();
+			}
+			break;
+
+
+		case 40:// 5 (Shift -> Midi Chn 5)
+			if(CTRL){
+				midi_channel=4;
+				MIDICHN();
+			}
+			break;
+
+
+	
+		case 44:// 6 (Shift -> Midi Chn 6)
+			if(CTRL){
+				midi_channel=5;
+				MIDICHN();
+			}
+			break;
+
+		case 48:// 3 (Shift -> Midi Chn 3)
+			if(CTRL){
+				midi_channel=2;
+				MIDICHN();
+				break;
+			}
+			if(COMMODORE && value){
+				MERGER();
+				break;
+			}
+			break;
+
+
+		case 51:// LSHIFT
+			if(value){
+				SHIFT=0;
+				MIOS_LCD_PrintCString("     ");
+			}else{
+				SHIFT=1;
+				MIOS_LCD_PrintCString("SHIFT");
+			}
+			break;
+
+		case 52:// 4 (Shift -> Midi Chn 4)
+			if(CTRL){
+				midi_channel=3;
+				MIDICHN();
+			}
+			break;
+
+
+		case 56:// 1 (Shift -> Midi Chn 1)
+			if(COMMODORE){
+				mode=1;
+			}
+			if(CTRL){
+				midi_channel=0;
+				MIDICHN();
+			}
+			break;
+
+
+		case 58:// CTRL
+
+			if(value){
+				CTRL=0;
+				MIOS_LCD_PrintCString("     ");
+			}else{
+				CTRL=1;
+				MIOS_LCD_PrintCString("CTRL ");
+			}
+			break;
+
+		case 59:// RUN/STOP
+			if(!value)break;
+			MIOS_LCD_CursorSet(0x40); // upper right
+			if(RUNSTOP==0){
+				RUNSTOP=1;
+				MIOS_LCD_PrintCString("RUN  ");
+				MCLOCK_DoPlay();
+			}else{
+				RUNSTOP=0;
+				MIOS_LCD_PrintCString("STOP ");
+				MCLOCK_DoStop();
+				step=0;//sequencer step
+				_tik=0;
+				ALL_NOTE_OFF();
+			}
+			break;
+
+		case 60:// 2 (Shift -> Midi Chn 2)
+			
+			if(COMMODORE){
+				mode=2;
+				MIOS_LCD_PrintCString("[DEBUG]MODE");
+				MIOS_LCD_PrintBCD1(mode);
+				break;
+			}
+
+			if(CTRL){
+				midi_channel=1;
+				MIDICHN();
+				break;
+			}
+			break;
+
+
+		case 62://<- COMMODORE KEY
+			
+			if(value){
+				COMMODORE=0;
+				//MIOS_LCD_PrintCString("     ");
+				MIOS_LCD_Clear();
+			}else{
+				COMMODORE=1;
+				MIOS_LCD_CursorSet(0x00);
+				MIOS_LCD_PrintCString("1:PLAY    5:SAVE");
+				MIOS_LCD_CursorSet(0x40);
+				MIOS_LCD_PrintCString("2:DEBUG   6:EDIT");
+				MIOS_LCD_CursorSet(0x80);
+				MIOS_LCD_PrintCString("3:MERGER  7:AIN");
+				MIOS_LCD_CursorSet(0xc0);
+				MIOS_LCD_PrintCString("4:SETUP   8:MON");
+			}
+			break;
+
+
+		case 63://space bar
+			if(!value){
+				MIOS_LCD_PrintCString("SPACE");
+				
+				//MCLOCK_DoPause();
+
+			}else{
+				MIOS_LCD_PrintCString("     ");
+			}
+			break;
+
+
+
+		default: break;
+	}
+
+
+
+}
